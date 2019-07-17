@@ -1,0 +1,7 @@
+# Replace the value with your Bot API token provided by Discord
+# See https://discordapp.com/developers/applications/
+discord_api_token: 'Y0uR0wNbotT0k3N'
+# List of the channels where name changes are allowed
+rename_allowed_channels:
+        - some-particular-channel
+

@@ -3,11 +3,19 @@
 
 import discord
 from discord.ext import commands
+import yaml
 
-TOKEN_FILENAME='TOKEN'
+CONFIG_FILENAME='tobman.yaml'
 
-with open(TOKEN_FILENAME, 'r') as token_file:
-    token = token_file.read().replace('\n','')
+with open(CONFIG_FILENAME, 'r') as config_file:
+    data = yaml.safe_load(config_file)
+    if 'discord_api_token' not in data:
+        print(f'Error: {CONFIG_FILENAME} does not define the key "token"')
+    token = data['discord_api_token']
+    if 'rename_allowed_channels' in data:
+        rename_allowed_channels = data['rename_allowed_channels']
+    else:
+        renamed_allowed_channels = []
 
 description = '''Bot de la tribu'''
 
@@ -19,7 +27,7 @@ async def on_ready():
 
 @bot.event
 async def on_guild_available(guild):
-    print(f'Joining guild {guild}')
+    print(f'Opened guild {guild}')
     if not guild.me.guild_permissions.manage_messages:
         print('Cannot manage messages')
     if not guild.me.guild_permissions.manage_nicknames:
@@ -31,7 +39,7 @@ async def rename(ctx, member: discord.Member, to_name):
     guild = ctx.guild
     author = ctx.author
     channel = ctx.message.channel
-    if (guild is not None) and (author is not None) :
+    if (guild is not None) and (author is not None) and (channel.name in rename_allowed_channels):
         if member is not None:
             original_name = member.nick or member.name
             print(f'change {original_name} to {to_name}')

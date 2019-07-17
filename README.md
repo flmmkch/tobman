@@ -2,12 +2,12 @@
 
 ## Setup
 
-Install the Discord.py library
+Install the required dependencies
 ```
-python3 -m pip install -U discord.py[voice]
+python3 -m pip install -U discord.py[voice] pyyaml
 ```
 
-Create a TOKEN plaintext file with your bot token provided by Discord
+Copy the default configuration **tobman.example.yaml** to **tobman.yaml** and edit the config file appropriately.
 
 Start the bot
 ```
