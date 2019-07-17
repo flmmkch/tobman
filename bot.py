@@ -33,10 +33,11 @@ async def rename(ctx, member: discord.Member, to_name):
     channel = ctx.message.channel
     if (guild is not None) and (author is not None) :
         if member is not None:
-            original_name = member.nick
+            original_name = member.nick or member.name
             print(f'change {original_name} to {to_name}')
             await member.edit(nick = to_name)
-            await channel.send(f'{author.name} change le nom de {original_name} en {member.mention}')
+            embed = discord.Embed(title = 'Changement de nom !', type = 'rich', description = f'{author.mention} change le nom de **{original_name}** en {member.mention}')
+            await channel.send(embed = embed)
         else:
             await author.send(f'Utilisateur inexistant')
         await ctx.message.delete()
