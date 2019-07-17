@@ -36,9 +36,9 @@ async def rename(ctx, member: discord.Member, to_name):
             original_name = member.nick
             print(f'change {original_name} to {to_name}')
             await member.edit(nick = to_name)
-            await channel.send(f'{author.name} change le nom de {original_name} en {to_name}')
+            await channel.send(f'{author.name} change le nom de {original_name} en {member.mention}')
         else:
-            await author.send(f'Utilisateur {member} inexistant')
+            await author.send(f'Utilisateur inexistant')
         await ctx.message.delete()
 
 bot.run(token)
