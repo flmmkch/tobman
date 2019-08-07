@@ -7,7 +7,10 @@ from enum import Enum
 import yaml
 import re
 
-MSG_UNABLE_RENAME_USER='Impossible de renommer l\'utilisateur'
+class Translation:
+    UNABLE_RENAME_USER='Impossible de renommer l\'utilisateur {0}'
+    RENAME_TITLE='Changement de nom !'
+    RENAME_MESSAGE='{0} change le nom de **{1}** en {2}'
 
 CONFIG_FILENAME='tobman.yaml'
 
@@ -49,9 +52,7 @@ with open(CONFIG_FILENAME, 'r') as config_file:
     else:
         rename_allowed_in = []
 
-description = '''Bot de la tribu'''
-
-bot = commands.Bot(command_prefix='/', description=description)
+bot = commands.Bot(command_prefix='/')
 
 @bot.event
 async def on_ready():
@@ -67,20 +68,29 @@ async def on_guild_available(guild):
     await guild.me.edit(nick = bot.user.name)
 
 @bot.command(name='rename')
-async def rename(ctx, member: discord.Member, to_name):
-    print(f'Rename command: {member} -> {to_name}')
+async def rename(ctx, member_id, to_name):
     guild = ctx.guild
     author = ctx.author
     channel = ctx.message.channel
+    member_real_id = None
+    if len(member_id) >= 4:
+        try:
+            member_real_id = int(member_id[3:-1])
+        except ValueError:
+            member_real_id = None
+    member = None
+    if member_real_id is not None:
+        member = guild.get_member(member_real_id)
+    print(f'Rename command: try {member_id} ({member}) -> {to_name}') 
     if (guild is not None) and (author is not None) and Section.list_fits(rename_allowed_in, channel):
         if (member is not None) and (not member.bot):
             original_name = member.nick or member.name
-            print(f'change {original_name} to {to_name}')
+            print(f'Rename command: change {original_name} to {to_name}')
             await member.edit(nick = to_name)
-            embed = discord.Embed(title = 'Changement de nom !', type = 'rich', description = f'{author.mention} change le nom de **{original_name}** en {member.mention}')
+            embed = discord.Embed(title = Translation.RENAME_TITLE, type = 'rich', description = Translation.RENAME_MESSAGE.format(author.mention, original_name, member.mention))
             await channel.send(embed = embed)
         else:
-            await author.send(MSG_UNABLE_RENAME_USER)
+            await author.send(Translation.UNABLE_RENAME_USER.format(member_id))
         await ctx.message.delete()
 
 bot.run(token)
