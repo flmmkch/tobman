@@ -7,6 +7,8 @@ from enum import Enum
 import yaml
 import re
 
+MSG_UNABLE_RENAME_USER='Impossible de renommer l\'utilisateur'
+
 CONFIG_FILENAME='tobman.yaml'
 
 class SectionType(Enum):
@@ -62,6 +64,7 @@ async def on_guild_available(guild):
         print('Cannot manage messages')
     if not guild.me.guild_permissions.manage_nicknames:
         print('Cannot manage nicknames')
+    await guild.me.edit(nick = bot.user.name)
 
 @bot.command(name='rename')
 async def rename(ctx, member: discord.Member, to_name):
@@ -70,14 +73,14 @@ async def rename(ctx, member: discord.Member, to_name):
     author = ctx.author
     channel = ctx.message.channel
     if (guild is not None) and (author is not None) and Section.list_fits(rename_allowed_in, channel):
-        if member is not None:
+        if (member is not None) and (not member.bot):
             original_name = member.nick or member.name
             print(f'change {original_name} to {to_name}')
             await member.edit(nick = to_name)
             embed = discord.Embed(title = 'Changement de nom !', type = 'rich', description = f'{author.mention} change le nom de **{original_name}** en {member.mention}')
             await channel.send(embed = embed)
         else:
-            await author.send(f'Utilisateur inexistant')
+            await author.send(MSG_UNABLE_RENAME_USER)
         await ctx.message.delete()
 
 bot.run(token)
