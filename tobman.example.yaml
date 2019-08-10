@@ -5,8 +5,12 @@ discord_api_token: 'Y0uR0wNbotT0k3N'
 rename_allowed_in:
         - '#some-general-text-channel'
         - 'Some category name'
+# If set to true, remove the original message used to send the command when successful
+remove_rename_commands: true
 # List of the channels where name changes are allowed
 events_allowed_in:
         - '#some-event-text-channel'
         - 'Some event category name'
+# If set to true, remove the original message used to send the command when successful
+remove_event_commands: true
 

@@ -26,11 +26,15 @@ class Translation:
     EVENTS_LIST_DESC='{1} événement(s) sur #{0}'
     EVENTS_CLEAR_TITLE='Purge des événements sur #{0}'
     EVENTS_CLEAR_DESC='{0} événement(s) supprimé(s)'
+    EVENTS_DELETE_TITLE='Suppression de l\'événement'
+    EVENTS_DELETE_DESC='Événement **{0}** supprimé'
     EVENTS_DELETE_TITLE='Événement supprimé'
-    EVENTS_DELETE_DESC='Événement [**{0}**]({1}) supprimé'
+    EVENTS_DELETE_BY='Par'
+    EVENTS_DELETE_NONE='Aucun événement ne correspond à **{0}**'
     EVENTS_REACT_TITLE='Événement **{0}**'
     EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
+    EVENTS_INFO_ADDED_BY='Ajouté par'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
     EVENTS_INFO_LOCATION='Lieu'
     EVENTS_INFO_LIST_STATUS='{0} **{1}**'
@@ -88,6 +92,7 @@ class Event:
         self.description = ''
         self.location = ''
         self.date = None
+        self.original_user_id = None
     @classmethod
     def parse_new_command(cls, original_message, args_list):
         event = None
@@ -170,6 +175,8 @@ class Event:
             serializable['date'] = date
         if self.url_thumbnail:
             serializable['th'] = self.url_thumbnail
+        if self.original_user_id:
+            serializable['ouid'] = self.original_user_id
         return serializable
     def from_deserializable(deserializable):
         try:
@@ -190,6 +197,8 @@ class Event:
                     event.url_thumbnail = str(deserializable['th'])
                 if 'loc' in deserializable:
                     event.location = str(deserializable['loc'])
+                if 'ouid' in deserializable:
+                    event.original_user_id = int(deserializable['ouid'])
                 return event
         except Exception as err:
             print(f'Error deserializing event: {json.dump(deserializable)}: {err}', file=sys.stderr)
@@ -227,6 +236,10 @@ class Event:
             type = 'rich',
             description = self.description
         )
+        if self.original_user_id:
+            original_user = bot.get_user(self.original_user_id)
+            if original_user:
+                embed.add_field(name = Translation.EVENTS_INFO_ADDED_BY, value = original_user.mention)
         if self.date:
             embed.add_field(name = self.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(self.remaining_days()).capitalize())
         if self.url_string:
@@ -283,6 +296,8 @@ class Tobman:
         self.events = {}
         self.config_filename = CONFIG_FILENAME
         self.data_filename = DATA_JSON_FILENAME
+        self.remove_rename_commands = False
+        self.remove_event_commands = False
     def load_config(self):
         with open(self.config_filename, 'r') as config_file:
             data = yaml.safe_load(config_file)
@@ -293,6 +308,10 @@ class Tobman:
                 self.rename_allowed_in = [Section.from_string(section_string) for section_string in data['rename_allowed_in']]
             if 'events_allowed_in' in data:
                 self.events_allowed_in = [Section.from_string(section_string) for section_string in data['events_allowed_in']]
+            if 'remove_rename_commands' in data:
+                self.remove_rename_commands = bool(data['remove_rename_commands'])
+            if 'remove_event_commands' in data:
+                self.remove_event_commands = bool(data['remove_event_commands'])
     def load_data(self):
         import os.path
         if os.path.isfile(self.data_filename):
@@ -331,6 +350,16 @@ class Tobman:
         self.events[id_str] = None
         self.save_data()
         return event_list
+    def delete_events(self, guild_id, channel_id, event_title):
+        id_str = Event.format_room_id(guild_id, channel_id)
+        event_list = self.events.get(id_str)
+        deleted_events = []
+        for event in event_list:
+            if event.title == event_title:
+                deleted_events.append(event)
+        for event in deleted_events:
+            event_list.remove(event)
+        return deleted_events
     async def refresh_channel_events(self, channel):
         if Section.list_fits(bot.tobman.events_allowed_in, channel):
             guild = channel.guild
@@ -343,6 +372,9 @@ class Tobman:
                         try:
                             message = await channel.fetch_message(int(event.message_id))
                             await event.set_message(message)
+                        except discord.NotFound:
+                            print(f'Message {event.message_id} not found, deleting event {event.title}', file=sys.stderr)
+                            events_to_delete.append(event)
                         except Exception as err:
                             print(f'Error refreshing events for message {event.message_id}: {err}', file=sys.stderr)
                     else:
@@ -368,7 +400,7 @@ class Tobman:
         event_list = self.events.get(id_str)
         if event_list:
             indices_to_remove = []
-            events_to_delete = [event for event in event_list if (event.message_id == message_id or event.command_message_id == message_id)]
+            events_to_delete = [event for event in event_list if event.message_id == message_id]
             if len(events_to_delete) > 0:
                 for event in events_to_delete:
                     event_list.remove(event)
@@ -376,7 +408,7 @@ class Tobman:
                 channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
                 if channel:
                     for event in events_to_delete:
-                        embed = discord.Embed(title = Translation.EVENTS_DELETE_TITLE, description = Translation.EVENTS_DELETE_DESC.format(event.title, event.message_url()))
+                        embed = discord.Embed(title = Translation.EVENTS_DELETE_TITLE, description = Translation.EVENTS_DELETE_DESC.format(event.title))
                         await channel.send(embed = embed)
     async def on_event_reaction_add(self, guild_id, channel_id, message_id, user_id, emoji):
         if user_id != self.bot.user.id and emoji.name in Event.REACTIONS:
@@ -456,7 +488,8 @@ async def rename(ctx, member_id, to_name):
             await channel.send(embed = embed)
         else:
             await author.send(Translation.UNABLE_RENAME_USER.format(member_id))
-        await ctx.message.delete()
+        if bot.tobman.remove_rename_commands:
+            await ctx.message.delete()
 
 @bot.command(name='event.new')
 async def event(ctx, *args):
@@ -470,11 +503,14 @@ async def event(ctx, *args):
             ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
             message = await channel.send(embed = embed, file = ics_cal_file)
             event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
+            event.original_user_id = ctx.message.author.id
             bot.tobman.add_event(event)
             # default reactions
             await message.add_reaction(Event.REACTION_OK)
             await message.add_reaction(Event.REACTION_NG)
             await event.set_message(message)
+            if bot.tobman.remove_event_commands:
+                await ctx.message.delete()
         elif error_embed:
             message = await channel.send(embed = error_embed)
         else:
@@ -503,7 +539,38 @@ async def event(ctx):
             for event in event_list:
                 embed.add_field(name = event.title, value = event.summary())
             await channel.send(embed = embed)
+            if bot.tobman.remove_event_commands:
+                await ctx.message.delete()
 
+@bot.command(name='event.delete')
+async def event(ctx, event_title: str):
+    guild = ctx.guild
+    author = ctx.author
+    channel = ctx.message.channel
+    if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel):
+        event_list = bot.tobman.delete_events(guild.id, channel.id, event_title)
+        if event_list and len(event_list) > 0:
+            for event in event_list:
+                try:
+                    event_message = await channel.fetch_message(event.message_id)
+                    await event_message.delete()
+                except discord.NotFound:
+                    print(f'Message {event.message_id} not found, deleting event {event.title}', file=sys.stderr)
+                embed = discord.Embed(title = Translation.EVENTS_DELETE_TITLE,
+                    type = 'rich',
+                    description = Translation.EVENTS_DELETE_DESC.format(event.title)
+                )
+                embed.add_field(name = Translation.EVENTS_DELETE_BY, value = ctx.message.author.mention)
+                await channel.send(embed = embed)
+            if bot.tobman.remove_event_commands:
+                await ctx.message.delete()
+        else:
+            embed = discord.Embed(title = Translation.EVENTS_DELETE_TITLE,
+                type = 'rich',
+                description = Translation.EVENTS_DELETE_NONE.format(event.title)
+            )
+            await channel.send(embed = embed)
+        
 @bot.command(name='event.clear')
 async def event(ctx):
     guild = ctx.guild
@@ -519,6 +586,8 @@ async def event(ctx):
             description = Translation.EVENTS_CLEAR_DESC.format(event_count)
         )
         await channel.send(embed = embed)
+        if bot.tobman.remove_event_commands:
+            await ctx.message.delete()
 
 @bot.event
 async def on_raw_message_delete(raw_delete_event):
