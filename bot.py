@@ -86,7 +86,7 @@ class Event:
         if len(args_list) > 0:
             original_embed = None
             if original_message is not None and original_message.embeds is not None and len(original_message.embeds) > 0:
-                original_embed = original_message.embeds[0]
+                original_embed = original_message.embeds[-1]
                 title = str(original_embed.title)
                 event = Event(title)
                 event.set_url(original_embed.url)
@@ -102,9 +102,11 @@ class Event:
                 type = 'rich',
                 description = event.description
                 )
+            if event.date:
+                embed.add_field(name = event.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(event.remaining_days()).capitalize())
             if original_embed:
                 embed.url = original_embed.url
-                if original_embed.thumbnail != discord.Embed.Empty:
+                if original_embed.thumbnail and original_embed.thumbnail.url.startswith('http'):
                     embed.set_thumbnail(url = original_embed.thumbnail.url)
         return event, embed
     def format_room_id(guild_id, channel_id):
