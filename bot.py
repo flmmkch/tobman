@@ -32,6 +32,7 @@ class Translation:
     EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
+    EVENTS_INFO_LOCATION='Lieu'
     EVENTS_INFO_LIST_STATUS='{0} **{1}**'
     EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
     EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
@@ -74,6 +75,7 @@ class Event:
     DATE_FORMAT='%Y-%m-%d'
     DATE_PREFIX='date:'
     URL_PREFIX='url:'
+    LOCATION_PREFIX='loc:'
     def __init__(self, title):
         self.guild_id = None
         self.channel_id = None
@@ -84,6 +86,7 @@ class Event:
         self.url_string = None
         self.url_thumbnail = None
         self.description = ''
+        self.location = ''
         self.date = None
     @classmethod
     def parse_new_command(cls, original_message, args_list):
@@ -106,6 +109,8 @@ class Event:
                 elif arg.startswith(cls.URL_PREFIX):
                     event.title = str(args_list[0])
                     event.set_url(arg[len(cls.URL_PREFIX):])
+                elif arg.startswith(cls.LOCATION_PREFIX):
+                    event.location = arg[len(cls.LOCATION_PREFIX):]
             if original_embed and original_embed.thumbnail and original_embed.thumbnail.url.startswith('http'):
                 event.url_thumbnail = original_embed.thumbnail.url
             elif original_embed and original_embed.image and original_embed.image.url.startswith('http'):
@@ -158,6 +163,8 @@ class Event:
             serializable['url'] = self.url_string
         if self.description:
             serializable['desc'] = self.description
+        if self.location:
+            serializable['loc'] = self.location
         date = self.get_date_string()
         if date:
             serializable['date'] = date
@@ -181,6 +188,8 @@ class Event:
                     event.set_date_from_string(deserializable['date'])
                 if 'th' in deserializable:
                     event.url_thumbnail = str(deserializable['th'])
+                if 'loc' in deserializable:
+                    event.location = str(deserializable['loc'])
                 return event
         except Exception as err:
             print(f'Error deserializing event: {json.dump(deserializable)}: {err}', file=sys.stderr)
@@ -201,6 +210,11 @@ class Event:
             cal_event = ics.Event()
             cal_event.name = self.title
             cal_event.begin = self.date
+            cal_event.created = datetime.datetime.today()
+            cal_event.description = self.description
+            cal_event.location = self.location
+            if self.url_string:
+                cal_event.url = self.url_string
             cal_event.make_all_day()
             cal.events.add(cal_event)
             ics_memory_buffer = io.StringIO()
@@ -217,6 +231,8 @@ class Event:
             embed.add_field(name = self.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(self.remaining_days()).capitalize())
         if self.url_string:
             embed.url = self.url_string
+        if self.location != '':
+            embed.add_field(name = Translation.EVENTS_INFO_LOCATION, value = self.location)
         if self.message:
             ok_count, ng_count = self.user_counts()
             if (ok_count > 0) or (ng_count > 0):
