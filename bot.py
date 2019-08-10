@@ -30,6 +30,7 @@ class Translation:
     EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
+    EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
 
 CONFIG_FILENAME='tobman.yaml'
 DATA_JSON_FILENAME='tobman-data.json'
@@ -67,6 +68,7 @@ class Event:
     REACTION_NG = '🆖'
     REACTIONS = [REACTION_OK, REACTION_NG]
     DATE_FORMAT='%Y-%m-%d'
+    DATE_PREFIX='date:'
     def __init__(self, title):
         self.guild_id = None
         self.channel_id = None
@@ -77,7 +79,8 @@ class Event:
         self.url_string = None
         self.description = ''
         self.date = None
-    def parse_new_command(original_message, args_list):
+    @classmethod
+    def parse_new_command(cls, original_message, args_list):
         event = None
         embed = None
         if len(args_list) > 0:
@@ -90,9 +93,11 @@ class Event:
                 event.description = original_embed.description
             else:
                 event = Event(str(args_list[0]))
-            if len(args_list) > 1:
-                # arg 1 should be the date
-                event.set_date_from_string(args_list[1])
+            for arg in args_list[1:]:
+                if arg.startswith(cls.DATE_PREFIX) and not event.date:
+                    event.set_date_from_string(args_list[1][len(cls.DATE_PREFIX):])
+                    if not event.get_date_string():
+                        return None, discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(args_list[1], Event.DATE_FORMAT))
             embed = discord.Embed(title = Translation.EVENTS_NEW_TITLE.format(event.title),
                 type = 'rich',
                 description = event.description
@@ -364,14 +369,15 @@ async def event(ctx, *args):
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel) and len(args) > 0:
         event, embed = Event.parse_new_command(ctx.message, args)
-        if event and embed:
+        if embed:
             message = await channel.send(embed = embed)
-            event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
-            event.set_message(message)
-            bot.tobman.add_event(event)
             # default reactions
-            await message.add_reaction(Event.REACTION_OK)
-            await message.add_reaction(Event.REACTION_NG)
+            if event:
+                event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
+                bot.tobman.add_event(event)
+                event.set_message(message)
+                await message.add_reaction(Event.REACTION_OK)
+                await message.add_reaction(Event.REACTION_NG)
         else:
             message = await channel.send(EVENTS_NEW_ERROR)
 
