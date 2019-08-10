@@ -259,10 +259,10 @@ class Event:
         # Edit the message
         embed = await self.generate_discord_embed()
         await message.edit(embed = embed)
-    def pending_date(self):
+    def still_active(self):
         if self.date:
             today = self.date.today()
-            return not (today < self.date)
+            return today <= self.date
         else:
             return True
     def remaining_days(self):
@@ -337,12 +337,19 @@ class Tobman:
             id_str = Event.format_room_id(guild.id, channel.id)
             event_list = self.events.get(id_str)
             if event_list is not None:
+                events_to_delete = []
                 for event in event_list:
-                    try:
-                        message = await channel.fetch_message(int(event.message_id))
-                        await event.set_message(message)
-                    except Exception as err:
-                        print(f'Error refreshing events for message {event.message_id}: {err}', file=sys.stderr)
+                    if event.still_active():
+                        try:
+                            message = await channel.fetch_message(int(event.message_id))
+                            await event.set_message(message)
+                        except Exception as err:
+                            print(f'Error refreshing events for message {event.message_id}: {err}', file=sys.stderr)
+                    else:
+                        events_to_delete.append(event)
+                for event in events_to_delete:
+                    event_list.remove(event)
+                self.save_data()
     def get_events_from_ids(self, guild_id, channel_id, message_id):
         id_str = Event.format_room_id(guild_id, channel_id)
         event_list = self.events.get(id_str)
