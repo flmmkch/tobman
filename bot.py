@@ -69,6 +69,7 @@ class Event:
     REACTIONS = [REACTION_OK, REACTION_NG]
     DATE_FORMAT='%Y-%m-%d'
     DATE_PREFIX='date:'
+    URL_PREFIX='url:'
     def __init__(self, title):
         self.guild_id = None
         self.channel_id = None
@@ -95,9 +96,12 @@ class Event:
                 event = Event(str(args_list[0]))
             for arg in args_list[1:]:
                 if arg.startswith(cls.DATE_PREFIX) and not event.date:
-                    event.set_date_from_string(args_list[1][len(cls.DATE_PREFIX):])
+                    event.set_date_from_string(arg[len(cls.DATE_PREFIX):])
                     if not event.get_date_string():
-                        return None, discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(args_list[1], Event.DATE_FORMAT))
+                        return None, discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(arg, Event.DATE_FORMAT))
+                elif arg.startswith(cls.URL_PREFIX):
+                    event.title = str(args_list[0])
+                    event.set_url(arg[len(cls.URL_PREFIX):])
             embed = discord.Embed(title = Translation.EVENTS_NEW_TITLE.format(event.title),
                 type = 'rich',
                 description = event.description
