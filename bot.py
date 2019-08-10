@@ -32,6 +32,7 @@ class Translation:
     EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
+    EVENTS_INFO_LIST_STATUS='{0} **{1}**'
     EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
     EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
 
@@ -81,12 +82,12 @@ class Event:
         self.title = title
         self.message = None
         self.url_string = None
+        self.url_thumbnail = None
         self.description = ''
         self.date = None
     @classmethod
     def parse_new_command(cls, original_message, args_list):
         event = None
-        embed = None
         if len(args_list) > 0:
             original_embed = None
             if original_message is not None and original_message.embeds is not None and len(original_message.embeds) > 0:
@@ -105,17 +106,11 @@ class Event:
                 elif arg.startswith(cls.URL_PREFIX):
                     event.title = str(args_list[0])
                     event.set_url(arg[len(cls.URL_PREFIX):])
-            embed = discord.Embed(title = Translation.EVENTS_NEW_TITLE.format(event.title),
-                type = 'rich',
-                description = event.description
-                )
-            if event.date:
-                embed.add_field(name = event.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(event.remaining_days()).capitalize())
-            if original_embed:
-                embed.url = original_embed.url
-                if original_embed.thumbnail and original_embed.thumbnail.url.startswith('http'):
-                    embed.set_thumbnail(url = original_embed.thumbnail.url)
-        return event, embed
+            if original_embed and original_embed.thumbnail and original_embed.thumbnail.url.startswith('http'):
+                event.url_thumbnail = original_embed.thumbnail.url
+            elif original_embed and original_embed.image and original_embed.image.url.startswith('http'):
+                event.url_thumbnail = original_embed.image.url
+        return event, None
     def format_room_id(guild_id, channel_id):
         return f'{guild_id}-{channel_id}'
     def set_ids(self, guild_id, channel_id, message_id, command_message_id):
@@ -127,6 +122,8 @@ class Event:
         ok_count = None
         ng_count = None
         if self.message is not None:
+            ok_count = 0
+            ng_count = 0
             for reaction in self.message.reactions:
                 if reaction.emoji == self.REACTION_OK:
                     ok_count = reaction.count
@@ -164,6 +161,8 @@ class Event:
         date = self.get_date_string()
         if date:
             serializable['date'] = date
+        if self.url_thumbnail:
+            serializable['th'] = self.url_thumbnail
         return serializable
     def from_deserializable(deserializable):
         try:
@@ -180,6 +179,8 @@ class Event:
                     event.description = deserializable['description']
                 if 'date' in deserializable:
                     event.set_date_from_string(deserializable['date'])
+                if 'th' in deserializable:
+                    event.url_thumbnail = str(deserializable['th'])
                 return event
         except Exception as err:
             print(f'Error deserializing event: {json.dump(deserializable)}: {err}', file=sys.stderr)
@@ -207,8 +208,41 @@ class Event:
             ics_memory_buffer.seek(0, 0)
             return ics_memory_buffer
         return None
-    def set_message(self, message):
+    async def generate_discord_embed(self):
+        embed = discord.Embed(title = Translation.EVENTS_NEW_TITLE.format(self.title),
+            type = 'rich',
+            description = self.description
+        )
+        if self.date:
+            embed.add_field(name = self.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(self.remaining_days()).capitalize())
+        if self.url_string:
+            embed.url = self.url_string
+        if self.message:
+            ok_count, ng_count = self.user_counts()
+            if (ok_count > 0) or (ng_count > 0):
+                ok_mentions = []
+                ng_mentions = []
+                for reaction in self.message.reactions:
+                    if reaction.emoji == self.REACTION_OK:
+                        async for user in reaction.users():
+                            if user.id != bot.user.id:
+                                ok_mentions.append(user.mention)
+                    elif reaction.emoji == self.REACTION_NG:
+                        async for user in reaction.users():
+                            if user.id != bot.user.id:
+                                ng_mentions.append(user.mention)
+                if ok_count > 0:
+                    embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ok_count), value = '\n'.join(ok_mentions))
+                if ng_count > 0:
+                    embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ng_count), value = '\n'.join(ng_mentions))
+        if self.url_thumbnail:
+            embed.set_thumbnail(url = self.url_thumbnail)
+        return embed
+    async def set_message(self, message):
         self.message = message
+        # Edit the message
+        embed = await self.generate_discord_embed()
+        await message.edit(embed = embed)
     def pending_date(self):
         if self.date:
             today = self.date.today()
@@ -290,7 +324,7 @@ class Tobman:
                 for event in event_list:
                     try:
                         message = await channel.fetch_message(int(event.message_id))
-                        event.set_message(message)
+                        await event.set_message(message)
                     except Exception as err:
                         print(f'Error refreshing events for message {event.message_id}: {err}', file=sys.stderr)
     def get_events_from_ids(self, guild_id, channel_id, message_id):
@@ -326,6 +360,8 @@ class Tobman:
             channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
             if channel:
                 for event in self.get_events_from_ids(guild_id, channel_id, message_id):
+                    message = await channel.fetch_message(message_id)
+                    await event.set_message(message)
                     member = bot.get_guild(guild_id).get_member(user_id)
                     if member:
                         desc_message = None
@@ -336,6 +372,21 @@ class Tobman:
                         embed = discord.Embed(
                             title = Translation.EVENTS_REACT_TITLE.format(event.title),
                             description = desc_message.format(member.mention, event.title, event.message_url())
+                        )
+                        await channel.send(embed = embed)
+    async def on_event_reaction_remove(self, guild_id, channel_id, message_id, user_id, emoji):
+        if user_id != self.bot.user.id and emoji.name in Event.REACTIONS:
+            channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
+            if channel:
+                for event in self.get_events_from_ids(guild_id, channel_id, message_id):
+                    # if there are no more reactions of this emoji then add it back
+                    message = await channel.fetch_message(message_id)
+                    await event.set_message(message)
+                    if emoji.name == Event.REACTION_OK:
+                        member = bot.get_guild(guild_id).get_member(user_id)
+                        embed = discord.Embed(
+                            title = Translation.EVENTS_REACT_TITLE.format(event.title),
+                            description = Translation.EVENTS_REACT_NG.format(member.mention, event.title, event.message_url())
                         )
                         await channel.send(embed = embed)
         
@@ -390,19 +441,19 @@ async def event(ctx, *args):
     author = ctx.author
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel) and len(args) > 0:
-        event, embed = Event.parse_new_command(ctx.message, args)
-        if embed:
-            ics_cal_file = None
-            if event:
-                ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
+        event, error_embed = Event.parse_new_command(ctx.message, args)
+        if event:
+            embed = await event.generate_discord_embed()
+            ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
             message = await channel.send(embed = embed, file = ics_cal_file)
+            event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
+            bot.tobman.add_event(event)
             # default reactions
-            if event:
-                event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
-                bot.tobman.add_event(event)
-                event.set_message(message)
-                await message.add_reaction(Event.REACTION_OK)
-                await message.add_reaction(Event.REACTION_NG)
+            await message.add_reaction(Event.REACTION_OK)
+            await message.add_reaction(Event.REACTION_NG)
+            await event.set_message(message)
+        elif error_embed:
+            message = await channel.send(embed = error_embed)
         else:
             message = await channel.send(EVENTS_NEW_ERROR)
 
@@ -453,5 +504,9 @@ async def on_raw_message_delete(raw_delete_event):
 @bot.event
 async def on_raw_reaction_add(raw_reaction_event):
     await bot.tobman.on_event_reaction_add(raw_reaction_event.guild_id, raw_reaction_event.channel_id, raw_reaction_event.message_id, raw_reaction_event.user_id, raw_reaction_event.emoji)
+
+@bot.event
+async def on_raw_reaction_remove(raw_reaction_event):
+    await bot.tobman.on_event_reaction_remove(raw_reaction_event.guild_id, raw_reaction_event.channel_id, raw_reaction_event.message_id, raw_reaction_event.user_id, raw_reaction_event.emoji)
 
 bot.run(bot.tobman.token)
