@@ -11,6 +11,8 @@ import json
 import os.path
 import urllib, urllib.parse
 import datetime
+import ics
+import io
 
 class Translation:
     UNABLE_RENAME_USER='Impossible de renommer l\'utilisateur {0}'
@@ -31,6 +33,7 @@ class Translation:
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
     EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
+    EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
 
 CONFIG_FILENAME='tobman.yaml'
 DATA_JSON_FILENAME='tobman-data.json'
@@ -190,6 +193,19 @@ class Event:
     def get_date_string(self):
         if self.date:
             return self.date.strftime(self.DATE_FORMAT)
+        return None
+    def generate_date_ics(self):
+        if self.date:
+            cal = ics.Calendar()
+            cal_event = ics.Event()
+            cal_event.name = self.title
+            cal_event.begin = self.date
+            cal_event.make_all_day()
+            cal.events.add(cal_event)
+            ics_memory_buffer = io.StringIO()
+            ics_memory_buffer.writelines(cal)
+            ics_memory_buffer.seek(0, 0)
+            return ics_memory_buffer
         return None
     def set_message(self, message):
         self.message = message
@@ -376,7 +392,10 @@ async def event(ctx, *args):
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel) and len(args) > 0:
         event, embed = Event.parse_new_command(ctx.message, args)
         if embed:
-            message = await channel.send(embed = embed)
+            ics_cal_file = None
+            if event:
+                ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
+            message = await channel.send(embed = embed, file = ics_cal_file)
             # default reactions
             if event:
                 event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
