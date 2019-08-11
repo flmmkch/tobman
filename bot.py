@@ -35,7 +35,8 @@ class Translation:
     EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
     EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
     EVENTS_INFO_ADDED_BY='Ajouté par'
-    EVENTS_INFO_REMAINING_DAYS='dans {0} jour(s)'
+    EVENTS_INFO_REMAINING_DAYS='dans {0} jours'
+    EVENTS_INFO_REMAINING_DAYS_TODAY='aujourd\'hui'
     EVENTS_INFO_LOCATION='Lieu'
     EVENTS_INFO_LIST_STATUS='{0} **{1}**'
     EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
@@ -150,7 +151,10 @@ class Event:
         remaining_days_string = ''
         remaining_days = self.remaining_days()
         if remaining_days is not None:
-            remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS.format(remaining_days)}*'
+            if remaining_days > 0:
+                remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS.format(remaining_days)}*'
+            else:
+                remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS_TODAY}*'
         if self.message is not None:
             ok_count, ng_count = self.user_counts()
             url_part = ''
