@@ -209,6 +209,7 @@ class Event:
             self.date = datetime.datetime.strptime(date_string, self.DATE_FORMAT)
         except Exception as err:
             print(f'Error reading date string {date_string}: {err}', file=sys.stderr)
+        self.date = self.date.replace(hour=11, minute=59)
     def get_date_string(self):
         if self.date:
             return self.date.strftime(self.DATE_FORMAT)
