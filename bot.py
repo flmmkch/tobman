@@ -477,7 +477,7 @@ async def rename(ctx, member_id, to_name):
     member_real_id = None
     if len(member_id) >= 4:
         try:
-            member_real_id = int(member_id[3:-1])
+            member_real_id = int(member_id.replace('@', '').replace('<', '').replace('!', '').replace('>', ''))
         except ValueError:
             member_real_id = None
     member = None
