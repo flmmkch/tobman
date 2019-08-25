@@ -32,14 +32,23 @@ class Translation:
     EVENTS_DELETE_BY='Par'
     EVENTS_DELETE_NONE='Aucun événement ne correspond à **{0}**'
     EVENTS_REACT_TITLE='Événement **{0}**'
-    EVENTS_REACT_OK='{0} participe à l\'événement [**{1}**]({2})'
-    EVENTS_REACT_NG='{0} ne participe pas à l\'événement [**{1}**]({2})'
+    EVENTS_REACT_OK='{0} participe à l\'événement [{1}]({2})'
+    EVENTS_REACT_NG='{0} ne participe pas à l\'événement [{1}]({2})'
     EVENTS_INFO_ADDED_BY='Ajouté par'
     EVENTS_INFO_REMAINING_DAYS='dans {0} jours'
     EVENTS_INFO_REMAINING_DAYS_TODAY='aujourd\'hui'
     EVENTS_INFO_LOCATION='Lieu'
     EVENTS_INFO_LIST_STATUS='{0} **{1}**'
     EVENTS_NEW_ERROR_DATE_FORMAT='Erreur à la création de l\'événement : la date \'{0}\' ne correspond pas au format {1}'
+    EVENTS_EDIT_TITLE='Modification de l\'événement'
+    EVENTS_EDIT_DESC='Événement [{0}]({1}) modifié'
+    EVENTS_EDIT_BY='Par'
+    EVENTS_EDIT_NONE='Aucun événement ne correspond à **{0}**'
+    EVENTS_MODIFICATION='Modification'
+    EVENTS_MODIFICATION_DATE='Date *{0}* ➡️ *{1}*'
+    EVENTS_MODIFICATION_LOC='Lieu *{0}* ➡️ *{1}*'
+    EVENTS_MODIFICATION_URL='Adresse *{0}* ➡️ *{1}*'
+    EVENTS_MODIFICATION_TITLE='Titre *{0}* ➡️ *{1}*'
     EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
 
 CONFIG_FILENAME='tobman.yaml'
@@ -73,11 +82,26 @@ class Section:
                 return True
         return False
 
+class EventError(Enum):
+    DATE_ERROR = 1
+
+class EventModification:
+    def __init__(self, message: str, old_value: str, new_value: str):
+        self.message = message
+        self.old_value = old_value
+        self.new_value = new_value
+    def __str__(self):
+        if self.old_value and self.old_value != '':
+            return self.message.format(self.old_value, self.new_value)
+        else:
+            return self.message.format('❌', self.new_value)
+
 class Event:
     REACTION_OK = '🆗'
     REACTION_NG = '🆖'
     REACTIONS = [REACTION_OK, REACTION_NG]
     DATE_FORMAT='%Y-%m-%d'
+    TITLE_PREFIX='title:'
     DATE_PREFIX='date:'
     URL_PREFIX='url:'
     LOCATION_PREFIX='loc:'
@@ -108,20 +132,56 @@ class Event:
             else:
                 event = Event(str(args_list[0]))
             for arg in args_list[1:]:
-                if arg.startswith(cls.DATE_PREFIX) and not event.date:
-                    event.set_date_from_string(arg[len(cls.DATE_PREFIX):])
-                    if not event.get_date_string():
-                        return None, discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(arg, Event.DATE_FORMAT))
-                elif arg.startswith(cls.URL_PREFIX):
+                for function in [self.parse_date, self.parse_loc]:
+                    mod, error = function(arg)
+                    if error:
+                        return None, error
+                if arg.startswith(cls.URL_PREFIX):
                     event.title = str(args_list[0])
                     event.set_url(arg[len(cls.URL_PREFIX):])
-                elif arg.startswith(cls.LOCATION_PREFIX):
-                    event.location = arg[len(cls.LOCATION_PREFIX):]
             if original_embed and original_embed.thumbnail and original_embed.thumbnail.url.startswith('http'):
                 event.url_thumbnail = original_embed.thumbnail.url
             elif original_embed and original_embed.image and original_embed.image.url.startswith('http'):
                 event.url_thumbnail = original_embed.image.url
         return event, None
+    def parse_edit_command(self, arg_list):
+        for arg in arg_list:
+            for function in [self.parse_title, self.parse_date, self.parse_loc, self.parse_url]:
+                mod, error = function(arg)
+                if mod:
+                    yield mod, None
+                    break
+                if error:
+                    yield None, error
+                    break
+    def parse_date(self, arg):
+        if arg.startswith(self.DATE_PREFIX):
+            old_date_string = self.get_date_string()
+            self.set_date_from_string(arg[len(self.DATE_PREFIX):])
+            date_string = self.get_date_string()
+            if date_string:
+                return EventModification(Translation.EVENTS_MODIFICATION_DATE, old_date_string, date_string), None
+            else:
+                return None, EventError.DATE_ERROR
+        return None, None
+    def parse_loc(self, arg):
+        if arg.startswith(self.LOCATION_PREFIX):
+            old_location = self.location
+            self.location = arg[len(self.LOCATION_PREFIX):]
+            return EventModification(Translation.EVENTS_MODIFICATION_LOC, old_location, self.location), None
+        return None, None
+    def parse_title(self, arg):
+        if arg.startswith(self.TITLE_PREFIX):
+            old_title = self.title
+            self.title = arg[len(self.TITLE_PREFIX):]
+            return EventModification(Translation.EVENTS_MODIFICATION_TITLE, old_title, self.title), None
+        return None, None
+    def parse_url(self, arg):
+        if arg.startswith(self.URL_PREFIX):
+            old_url = self.url_string
+            event.set_url(arg[len(self.URL_PREFIX):])
+            return EventModification(Translation.EVENTS_MODIFICATION_URL, old_url, event.url_string), None
+        return None, None
     def format_room_id(guild_id, channel_id):
         return f'{guild_id}-{channel_id}'
     def set_ids(self, guild_id, channel_id, message_id, command_message_id):
@@ -252,26 +312,28 @@ class Event:
         if self.location != '':
             embed.add_field(name = Translation.EVENTS_INFO_LOCATION, value = self.location)
         if self.message:
-            ok_count, ng_count = self.user_counts()
-            if (ok_count > 0) or (ng_count > 0):
-                ok_mentions = []
-                ng_mentions = []
-                for reaction in self.message.reactions:
-                    if reaction.emoji == self.REACTION_OK:
-                        async for user in reaction.users():
-                            if user.id != bot.user.id:
-                                ok_mentions.append(user.mention)
-                    elif reaction.emoji == self.REACTION_NG:
-                        async for user in reaction.users():
-                            if user.id != bot.user.id:
-                                ng_mentions.append(user.mention)
-                if ok_count > 0:
-                    embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ok_count), value = '\n'.join(ok_mentions))
-                if ng_count > 0:
-                    embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ng_count), value = '\n'.join(ng_mentions))
+            await self.generate_add_ok_ng_embed_fields(embed)
         if self.url_thumbnail:
             embed.set_thumbnail(url = self.url_thumbnail)
         return embed
+    async def generate_add_ok_ng_embed_fields(self, embed):
+        ok_count, ng_count = self.user_counts()
+        if (ok_count > 0) or (ng_count > 0):
+            ok_mentions = []
+            ng_mentions = []
+            for reaction in self.message.reactions:
+                if reaction.emoji == self.REACTION_OK:
+                    async for user in reaction.users():
+                        if user.id != bot.user.id:
+                            ok_mentions.append(user.mention)
+                elif reaction.emoji == self.REACTION_NG:
+                    async for user in reaction.users():
+                        if user.id != bot.user.id:
+                            ng_mentions.append(user.mention)
+            if ok_count > 0:
+                embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ok_count), value = '\n'.join(ok_mentions))
+            if ng_count > 0:
+                embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ng_count), value = '\n'.join(ng_mentions))
     async def set_message(self, message):
         self.message = message
         # Edit the message
@@ -355,6 +417,17 @@ class Tobman:
         self.events[id_str] = None
         self.save_data()
         return event_list
+    def get_event(self, guild_id, channel_id, message_id):
+        id_str = Event.format_room_id(guild_id, channel_id)
+        event_list = self.events.get(id_str)
+        if event_list:
+            return [event for event in event_list if (event.message_id == message_id)]
+    def get_events_by_title(self, guild_id, channel_id, event_title):
+        id_str = Event.format_room_id(guild_id, channel_id)
+        event_list = self.events.get(id_str)
+        for event in event_list:
+            if event.title == event_title:
+                yield event
     def delete_events(self, guild_id, channel_id, event_title):
         id_str = Event.format_room_id(guild_id, channel_id)
         event_list = self.events.get(id_str)
@@ -364,7 +437,7 @@ class Tobman:
                 deleted_events.append(event)
         for event in deleted_events:
             event_list.remove(event)
-        return deleted_events
+            yield event
     async def refresh_channel_events(self, channel):
         if Section.list_fits(bot.tobman.events_allowed_in, channel):
             guild = channel.guild
@@ -387,14 +460,6 @@ class Tobman:
                 for event in events_to_delete:
                     event_list.remove(event)
                 self.save_data()
-    def get_events_from_ids(self, guild_id, channel_id, message_id):
-        id_str = Event.format_room_id(guild_id, channel_id)
-        event_list = self.events.get(id_str)
-        if event_list:
-            indices_to_remove = []
-            return [event for event in event_list if (event.message_id == message_id)]
-        else:
-            return []
     def get_channel_from_ids(self, guild_id, channel_id, only_if_can_send = False):
         channel = self.bot.get_channel(channel_id)
         if channel and ((not only_if_can_send) or channel.permissions_for(channel.guild.me).send_messages):
@@ -419,7 +484,7 @@ class Tobman:
         if user_id != self.bot.user.id and emoji.name in Event.REACTIONS:
             channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
             if channel:
-                for event in self.get_events_from_ids(guild_id, channel_id, message_id):
+                for event in self.get_event(guild_id, channel_id, message_id):
                     message = await channel.fetch_message(message_id)
                     await event.set_message(message)
                     member = bot.get_guild(guild_id).get_member(user_id)
@@ -438,7 +503,7 @@ class Tobman:
         if user_id != self.bot.user.id and emoji.name in Event.REACTIONS:
             channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
             if channel:
-                for event in self.get_events_from_ids(guild_id, channel_id, message_id):
+                for event in self.get_event(guild_id, channel_id, message_id):
                     # if there are no more reactions of this emoji then add it back
                     message = await channel.fetch_message(message_id)
                     await event.set_message(message)
@@ -502,7 +567,7 @@ async def event(ctx, *args):
     author = ctx.author
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel) and len(args) > 0:
-        event, error_embed = Event.parse_new_command(ctx.message, args)
+        event, error_type = Event.parse_new_command(ctx.message, args)
         if event:
             embed = await event.generate_discord_embed()
             ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
@@ -516,7 +581,8 @@ async def event(ctx, *args):
             await event.set_message(message)
             if bot.tobman.remove_event_commands:
                 await ctx.message.delete()
-        elif error_embed:
+        elif error_type == EventError.DATE_ERROR:
+            error_embed = discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(arg, Event.DATE_FORMAT))
             message = await channel.send(embed = error_embed)
         else:
             message = await channel.send(EVENTS_NEW_ERROR)
@@ -547,13 +613,62 @@ async def event(ctx):
             if bot.tobman.remove_event_commands:
                 await ctx.message.delete()
 
+@bot.command(name='event.edit')
+async def event(ctx, event_title: str, *args):
+    guild = ctx.guild
+    author = ctx.author
+    channel = ctx.message.channel
+    if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel):
+        event_list = list(bot.tobman.get_events_by_title(guild.id, channel.id, event_title))
+        if event_list and len(event_list) > 0:
+            for event in event_list:
+                modifications = list(event.parse_edit_command(args))
+                error_count = 0
+                for modification, error in modifications:
+                    if error:
+                        if error == EventError.DATE_ERROR:
+                            error_embed = discord.Embed(title = Translation.EVENTS_NEW_ERROR, type = 'rich', description = Translation.EVENTS_NEW_ERROR_DATE_FORMAT.format(arg, Event.DATE_FORMAT))
+                            message = await channel.send(embed = error_embed)
+                        else:
+                            print(f'Error {error} while modifying event {event.title}, command: {args}', file=sys.stderr)
+                        error_count += 1
+                if (len(modifications) > 0) and (error_count == 0):
+                    bot.tobman.save_data()
+                    try:
+                        message = await channel.fetch_message(event.message_id)
+                        if message:
+                            await event.set_message(message)
+                            new_embed = await event.generate_discord_embed()
+                            # Can't attach a file to a message edit...
+                            # ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
+                            await message.edit(embed = new_embed)
+                    except discord.NotFound:
+                        print(f'Message {event.message_id} not found, modifying event {event.title}', file=sys.stderr)
+                    embed = discord.Embed(title = Translation.EVENTS_EDIT_TITLE,
+                        type = 'rich',
+                        description = Translation.EVENTS_EDIT_DESC.format(event.title, event.message_url())
+                    )
+                    embed.add_field(name = Translation.EVENTS_EDIT_BY, value = ctx.message.author.mention)
+                    await event.generate_add_ok_ng_embed_fields(embed)
+                    for modification, error in modifications:
+                        embed.add_field(name = Translation.EVENTS_MODIFICATION, value = str(modification))
+                    await channel.send(embed = embed)
+                if bot.tobman.remove_event_commands:
+                    await ctx.message.delete()
+        else:
+            embed = discord.Embed(title = Translation.EVENTS_EDIT_TITLE,
+                type = 'rich',
+                description = Translation.EVENTS_EDIT_NONE.format(event.title)
+            )
+            await channel.send(embed = embed)
+
 @bot.command(name='event.delete')
 async def event(ctx, event_title: str):
     guild = ctx.guild
     author = ctx.author
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel):
-        event_list = bot.tobman.delete_events(guild.id, channel.id, event_title)
+        event_list = list(bot.tobman.delete_events(guild.id, channel.id, event_title))
         if event_list and len(event_list) > 0:
             for event in event_list:
                 try:
