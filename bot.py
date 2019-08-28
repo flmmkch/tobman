@@ -132,7 +132,7 @@ class Event:
             else:
                 event = Event(str(args_list[0]))
             for arg in args_list[1:]:
-                for function in [self.parse_date, self.parse_loc]:
+                for function in [event.parse_date, event.parse_loc]:
                     mod, error = function(arg)
                     if error:
                         return None, error
@@ -570,7 +570,9 @@ async def event(ctx, *args):
         event, error_type = Event.parse_new_command(ctx.message, args)
         if event:
             embed = await event.generate_discord_embed()
-            ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
+            ics_cal_file = event.generate_date_ics()
+            if ics_cal_file:
+                ics_cal_file = discord.File(ics_cal_file, filename = Translation.EVENT_CALENDAR_FILENAME.format(str(event.title)))
             message = await channel.send(embed = embed, file = ics_cal_file)
             event.set_ids(guild.id, channel.id, message.id, ctx.message.id)
             event.original_user_id = ctx.message.author.id
