@@ -13,6 +13,7 @@ import urllib, urllib.parse
 import datetime
 import ics
 import io
+import asyncio
 
 class Translation:
     UNABLE_RENAME_USER='Impossible de renommer l\'utilisateur {0}'
@@ -50,6 +51,7 @@ class Translation:
     EVENTS_MODIFICATION_LOC='Lieu *{0}* ➡️ *{1}*'
     EVENTS_MODIFICATION_URL='Adresse *{0}* ➡️ *{1}*'
     EVENTS_MODIFICATION_TITLE='Titre *{0}* ➡️ *{1}*'
+    EVENTS_REMINDER_TITLE='ℹ Événements'
     EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
 
 CONFIG_FILENAME='tobman.yaml'
@@ -185,6 +187,12 @@ class Event:
         return None, None
     def format_room_id(guild_id, channel_id):
         return f'{guild_id}-{channel_id}'
+    def parse_room_id(channel_id_str: str):
+        channel_str_elems = channel_id_str.split('-')
+        if len(channel_str_elems) >= 2:
+            return int(channel_str_elems[0]), int(channel_str_elems[1])
+        else:
+            return None, None
     def set_ids(self, guild_id, channel_id, message_id, command_message_id):
         self.guild_id = guild_id
         self.channel_id = channel_id
@@ -319,20 +327,27 @@ class Event:
         if self.url_thumbnail:
             embed.set_thumbnail(url = self.url_thumbnail)
         return embed
+    async def ok_users(self):
+        users = []
+        for reaction in self.message.reactions:
+            if reaction.emoji == self.REACTION_OK:
+                async for user in reaction.users():
+                    if user != bot.user:
+                        users.append(user)
+        return users
+    async def ng_users(self):
+        users = []
+        for reaction in self.message.reactions:
+            if reaction.emoji == self.REACTION_NG:
+                async for user in reaction.users():
+                    if user != bot.user:
+                        users.append(user)
+        return users
     async def generate_add_ok_ng_embed_fields(self, embed):
         ok_count, ng_count = self.user_counts()
-        if (ok_count > 0) or (ng_count > 0):
-            ok_mentions = []
-            ng_mentions = []
-            for reaction in self.message.reactions:
-                if reaction.emoji == self.REACTION_OK:
-                    async for user in reaction.users():
-                        if user.id != bot.user.id:
-                            ok_mentions.append(user.mention)
-                elif reaction.emoji == self.REACTION_NG:
-                    async for user in reaction.users():
-                        if user.id != bot.user.id:
-                            ng_mentions.append(user.mention)
+        if (ok_count and (ok_count > 0)) or (ng_count and (ng_count > 0)):
+            ok_mentions = [user.mention for user in await self.ok_users()]
+            ng_mentions = [user.mention for user in await self.ng_users()]
             if ok_count > 0:
                 embed.add_field(name = Translation.EVENTS_INFO_LIST_STATUS.format(self.REACTION_OK, ok_count), value = '\n'.join(ok_mentions))
             if ng_count > 0:
@@ -352,11 +367,14 @@ class Event:
     def remaining_days(self):
         if self.date:
             today = self.date.today()
-            if today > self.date:
-                return 0
-            else:
-                delta = self.date - today
-                return int(delta.days) + 1
+            delta = self.date - today
+            return int(delta.days) + 1
+        return None
+    async def refresh_message(self, discord_messageable):
+        message = await discord_messageable.fetch_message(int(self.message_id))
+        if message:
+            await self.set_message(message)
+            return message
         return None
 
 class Tobman:
@@ -369,6 +387,7 @@ class Tobman:
         self.data_filename = DATA_JSON_FILENAME
         self.remove_rename_commands = False
         self.remove_event_commands = False
+        self.init_schedule()
     def load_config(self):
         with open(self.config_filename, 'r') as config_file:
             data = yaml.safe_load(config_file)
@@ -452,8 +471,7 @@ class Tobman:
                 for event in event_list:
                     if event.still_active():
                         try:
-                            message = await channel.fetch_message(int(event.message_id))
-                            await event.set_message(message)
+                            event.refresh_message(channel)
                         except discord.NotFound:
                             print(f'Message {event.message_id} not found, deleting event {event.title}', file=sys.stderr)
                             events_to_delete.append(event)
@@ -489,8 +507,7 @@ class Tobman:
             channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
             if channel:
                 for event in self.get_event(guild_id, channel_id, message_id):
-                    message = await channel.fetch_message(message_id)
-                    await event.set_message(message)
+                    event.refresh_message(channel)
                     member = bot.get_guild(guild_id).get_member(user_id)
                     if member:
                         desc_message = None
@@ -509,8 +526,7 @@ class Tobman:
             if channel:
                 for event in self.get_event(guild_id, channel_id, message_id):
                     # if there are no more reactions of this emoji then add it back
-                    message = await channel.fetch_message(message_id)
-                    await event.set_message(message)
+                    event.refresh_message(channel)
                     if emoji.name == Event.REACTION_OK:
                         member = bot.get_guild(guild_id).get_member(user_id)
                         embed = discord.Embed(
@@ -518,6 +534,56 @@ class Tobman:
                             description = Translation.EVENTS_REACT_NG.format(member.mention, event.title, event.message_url())
                         )
                         await channel.send(embed = embed)
+    # time of day for reminders
+    SCHEDULE_TIME = datetime.time(hour=9)
+    EVENT_DAYS = [
+        (7, f'{Translation.EVENTS_INFO_REMAINING_DAYS.format(7)}'),
+        (1, Translation.EVENTS_INFO_REMAINING_DAYS_TOMORROW),
+        (0, Translation.EVENTS_INFO_REMAINING_DAYS_TODAY),
+    ]
+    def init_schedule(self):
+        now = datetime.datetime.now()
+        self.next_schedule = datetime.datetime.combine(datetime.datetime.today(), self.SCHEDULE_TIME)
+        if now > self.next_schedule:
+            self.next_schedule += datetime.timedelta(days=1)
+    async def events_scheduled_job(self):
+        await self.bot.wait_until_ready()
+        if not self.bot.is_closed():
+            now = datetime.datetime.now()
+            if (now >= self.next_schedule):
+                self.last_schedule = now
+                self.next_schedule = datetime.datetime.combine(datetime.datetime.today() + datetime.timedelta(days=1), self.SCHEDULE_TIME)
+                print(f'Next schedule: {self.next_schedule}')
+                for channel_id_key, event_list in self.events.items():
+                    guild_id, channel_id = Event.parse_room_id(channel_id_key)
+                    if guild_id and channel_id:
+                        channel = self.bot.get_channel(channel_id)
+                        if channel:
+                            for days_remaining, event_date_message in self.EVENT_DAYS:
+                                events_to_come = []
+                                for event in event_list:
+                                    await event.refresh_message(channel)
+                                    if event.remaining_days() == days_remaining:
+                                        events_to_come.append(event)
+                                        print(f'Event in {days_remaining} day(s): "{event.title}""')
+                                if len(events_to_come) > 0:
+                                        embed = discord.Embed(title = Translation.EVENTS_REMINDER_TITLE,
+                                            type = 'rich'
+                                        )
+                                        for event in events_to_come:
+                                            ok_mentions = [user.mention for user in await event.ok_users()]
+                                            ok_mentions_string = '\n'.join(ok_mentions)
+                                            if len(ok_mentions_string) > 0:
+                                                ok_mentions_string = '\n' + ok_mentions_string
+                                            embed.add_field(name = f'{event.title}', value = f'[{event.title}]({event.message_url()})\n*{event_date_message}*{ok_mentions_string}')
+                                        await channel.send(embed = embed)
+                        else:
+                            print(f'Channel not found: {channel_id} {len(event_list)}', file=sys.stderr)
+    async def loop_time_check(self):
+        await self.bot.wait_until_ready()
+        while not self.bot.is_closed():
+            await self.events_scheduled_job()
+            await asyncio.sleep(60)
         
 
 bot = commands.Bot(command_prefix='/')
@@ -641,9 +707,8 @@ async def event(ctx, event_title: str, *args):
                 if (len(modifications) > 0) and (error_count == 0):
                     bot.tobman.save_data()
                     try:
-                        message = await channel.fetch_message(event.message_id)
+                        message = await event.refresh_mesage(channel)
                         if message:
-                            await event.set_message(message)
                             new_embed = await event.generate_discord_embed()
                             # Can't attach a file to a message edit...
                             # ics_cal_file = discord.File(event.generate_date_ics(), filename = Translation.EVENT_CALENDAR_FILENAME.format(event.title))
@@ -678,7 +743,7 @@ async def event(ctx, event_title: str):
         if event_list and len(event_list) > 0:
             for event in event_list:
                 try:
-                    event_message = await channel.fetch_message(event.message_id)
+                    event_message = await event.refresh_message(channel)
                     await event_message.delete()
                 except discord.NotFound:
                     print(f'Message {event.message_id} not found, deleting event {event.title}', file=sys.stderr)
@@ -726,5 +791,7 @@ async def on_raw_reaction_add(raw_reaction_event):
 @bot.event
 async def on_raw_reaction_remove(raw_reaction_event):
     await bot.tobman.on_event_reaction_remove(raw_reaction_event.guild_id, raw_reaction_event.channel_id, raw_reaction_event.message_id, raw_reaction_event.user_id, raw_reaction_event.emoji)
+
+bot.loop.create_task(bot.tobman.loop_time_check())
 
 bot.run(bot.tobman.token)
