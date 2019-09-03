@@ -345,7 +345,8 @@ class Event:
     def still_active(self):
         if self.date:
             today = self.date.today()
-            return today <= self.date
+            delta = self.date - today
+            return int(delta.days) < 0
         else:
             return True
     def remaining_days(self):
