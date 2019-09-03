@@ -51,7 +51,7 @@ class Translation:
     EVENTS_MODIFICATION_LOC='Lieu *{0}* ➡️ *{1}*'
     EVENTS_MODIFICATION_URL='Adresse *{0}* ➡️ *{1}*'
     EVENTS_MODIFICATION_TITLE='Titre *{0}* ➡️ *{1}*'
-    EVENTS_REMINDER_TITLE='ℹ Événements'
+    EVENTS_REMINDER_TITLE='ℹ Événements à venir'
     EVENT_CALENDAR_FILENAME='Agenda - {0}.ics'
 
 CONFIG_FILENAME='tobman.yaml'
@@ -224,7 +224,7 @@ class Event:
                 remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS.format(remaining_days)}*'
             elif remaining_days == 1:
                 remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS_TOMORROW}*'
-            else:
+            elif remaining_days == 0:
                 remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS_TODAY}*'
         if self.message is not None:
             ok_count, ng_count = self.user_counts()
@@ -317,7 +317,15 @@ class Event:
             if original_user:
                 embed.add_field(name = Translation.EVENTS_INFO_ADDED_BY, value = original_user.mention)
         if self.date:
-            embed.add_field(name = self.get_date_string(), value = Translation.EVENTS_INFO_REMAINING_DAYS.format(self.remaining_days()).capitalize())
+            remaining_days_string = ''
+            remaining_days = self.remaining_days()
+            if remaining_days > 1:
+                remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS.format(remaining_days)}*'
+            elif remaining_days == 1:
+                remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS_TOMORROW}*'
+            elif remaining_days == 0:
+                remaining_days_string = f' *{Translation.EVENTS_INFO_REMAINING_DAYS_TODAY}*'
+            embed.add_field(name = self.get_date_string(), value = remaining_days_string.capitalize())
         if self.url_string:
             embed.url = self.url_string
         if self.location != '':
@@ -551,6 +559,7 @@ class Tobman:
         if not self.bot.is_closed():
             now = datetime.datetime.now()
             if (now >= self.next_schedule):
+                print(f'Running scheduled events check')
                 self.last_schedule = now
                 self.next_schedule = datetime.datetime.combine(datetime.datetime.today() + datetime.timedelta(days=1), self.SCHEDULE_TIME)
                 print(f'Next schedule: {self.next_schedule}')
@@ -562,10 +571,13 @@ class Tobman:
                             for days_remaining, event_date_message in self.EVENT_DAYS:
                                 events_to_come = []
                                 for event in event_list:
-                                    await event.refresh_message(channel)
-                                    if event.remaining_days() == days_remaining:
-                                        events_to_come.append(event)
-                                        print(f'Event in {days_remaining} day(s): "{event.title}""')
+                                    try:
+                                        await event.refresh_message(channel)
+                                        if event.remaining_days() == days_remaining:
+                                            events_to_come.append(event)
+                                            print(f'Event in {days_remaining} day(s) [{event_date_message}]: "{event.title}"')
+                                    except discord.NotFound:
+                                        print(f'Message {event.message_id} ({event.title}) not found, ignoring for scheduled check', file=sys.stderr)
                                 if len(events_to_come) > 0:
                                         embed = discord.Embed(title = Translation.EVENTS_REMINDER_TITLE,
                                             type = 'rich'
@@ -575,7 +587,7 @@ class Tobman:
                                             ok_mentions_string = '\n'.join(ok_mentions)
                                             if len(ok_mentions_string) > 0:
                                                 ok_mentions_string = '\n' + ok_mentions_string
-                                            embed.add_field(name = f'{event.title}', value = f'[{event.title}]({event.message_url()})\n*{event_date_message}*{ok_mentions_string}')
+                                            embed.add_field(name = f'{event_date_message}', value = f'[{event.title}]({event.message_url()}){ok_mentions_string}')
                                         await channel.send(embed = embed)
                         else:
                             print(f'Channel not found: {channel_id} {len(event_list)}', file=sys.stderr)
@@ -740,6 +752,7 @@ async def event(ctx, event_title: str):
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel):
         event_list = list(bot.tobman.delete_events(guild.id, channel.id, event_title))
+        bot.tobman.save_data()
         if event_list and len(event_list) > 0:
             for event in event_list:
                 try:
