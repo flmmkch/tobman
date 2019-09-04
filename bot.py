@@ -369,7 +369,7 @@ class Event:
         if self.date:
             today = self.date.today()
             delta = self.date - today
-            return int(delta.days) < 0
+            return int(delta.days) >= 0
         else:
             return True
     def remaining_days(self):
@@ -422,8 +422,10 @@ class Tobman:
                             self.events[channel_id_key] = []
                             for event_json in event_list_json:
                                 event = Event.from_deserializable(event_json)
+                                print(f'Deserialized event {event.title}')
                                 if event is not None:
                                     self.events[channel_id_key].append(event)
+                                    print(f'Added event {event.title} to {channel_id_key}')
     def save_data(self):
         data_json = {}
         data_json['events'] = {}
@@ -468,6 +470,7 @@ class Tobman:
                 deleted_events.append(event)
         for event in deleted_events:
             event_list.remove(event)
+            print(f'Removed event {event.title} from {id_str}')
             yield event
     async def refresh_channel_events(self, channel):
         if Section.list_fits(bot.tobman.events_allowed_in, channel):
@@ -475,11 +478,12 @@ class Tobman:
             id_str = Event.format_room_id(guild.id, channel.id)
             event_list = self.events.get(id_str)
             if event_list is not None:
+                print(f'Refreshing event list for {id_str}')
                 events_to_delete = []
                 for event in event_list:
                     if event.still_active():
                         try:
-                            event.refresh_message(channel)
+                            await event.refresh_message(channel)
                         except discord.NotFound:
                             print(f'Message {event.message_id} not found, deleting event {event.title}', file=sys.stderr)
                             events_to_delete.append(event)
@@ -488,6 +492,7 @@ class Tobman:
                     else:
                         events_to_delete.append(event)
                 for event in events_to_delete:
+                    print(f'Removed event {event.title} from {id_str}')
                     event_list.remove(event)
                 self.save_data()
     def get_channel_from_ids(self, guild_id, channel_id, only_if_can_send = False):
@@ -515,7 +520,7 @@ class Tobman:
             channel = self.get_channel_from_ids(guild_id, channel_id, only_if_can_send = True)
             if channel:
                 for event in self.get_event(guild_id, channel_id, message_id):
-                    event.refresh_message(channel)
+                    await event.refresh_message(channel)
                     member = bot.get_guild(guild_id).get_member(user_id)
                     if member:
                         desc_message = None
@@ -534,7 +539,7 @@ class Tobman:
             if channel:
                 for event in self.get_event(guild_id, channel_id, message_id):
                     # if there are no more reactions of this emoji then add it back
-                    event.refresh_message(channel)
+                    await event.refresh_message(channel)
                     if emoji.name == Event.REACTION_OK:
                         member = bot.get_guild(guild_id).get_member(user_id)
                         embed = discord.Embed(
@@ -678,6 +683,7 @@ async def event(ctx):
     channel = ctx.message.channel
     if (guild is not None) and (not author.bot) and Section.list_fits(bot.tobman.events_allowed_in, channel):
         id_str = Event.format_room_id(guild.id, channel.id)
+        print(f'List events for channel {id_str}')
         event_list = bot.tobman.events.get(id_str)
         if (event_list is None) or (len(event_list) == 0):
             embed = discord.Embed(title = Translation.EVENTS_LIST_TITLE.format(channel.name),
