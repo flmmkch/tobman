@@ -365,18 +365,20 @@ class Event:
         # Edit the message
         embed = await self.generate_discord_embed()
         await message.edit(embed = embed)
+    def today(self):
+        return datetime.datetime.combine(datetime.datetime.today(), datetime.time(hour = self.date.hour, minute = self.date.minute, second = self.date.second, microsecond = self.date.microsecond, tzinfo = self.date.tzinfo))
     def still_active(self):
         if self.date:
-            today = self.date.today()
+            today = self.today()
             delta = self.date - today
             return int(delta.days) >= 0
         else:
             return True
     def remaining_days(self):
         if self.date:
-            today = self.date.today()
+            today = self.today()
             delta = self.date - today
-            return int(delta.days) + 1
+            return int(delta.days)
         return None
     async def refresh_message(self, discord_messageable):
         message = await discord_messageable.fetch_message(int(self.message_id))
