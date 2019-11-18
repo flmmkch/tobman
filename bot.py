@@ -749,7 +749,7 @@ async def event(ctx, event_title: str, *args):
         else:
             embed = discord.Embed(title = Translation.EVENTS_EDIT_TITLE,
                 type = 'rich',
-                description = Translation.EVENTS_EDIT_NONE.format(event.title)
+                description = Translation.EVENTS_EDIT_NONE.format(event_title)
             )
             await channel.send(embed = embed)
 
