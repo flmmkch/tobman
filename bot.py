@@ -160,7 +160,7 @@ class Event:
     def parse_date(self, arg):
         if arg.startswith(self.DATE_PREFIX):
             old_date_string = self.get_date_string()
-            self.set_date_from_string(arg[len(self.DATE_PREFIX):])
+            self.set_date_from_string(arg[len(self.DATE_PREFIX):].strip())
             date_string = self.get_date_string()
             if date_string:
                 return EventModification(Translation.EVENTS_MODIFICATION_DATE, old_date_string, date_string), None
@@ -170,19 +170,19 @@ class Event:
     def parse_loc(self, arg):
         if arg.startswith(self.LOCATION_PREFIX):
             old_location = self.location
-            self.location = arg[len(self.LOCATION_PREFIX):]
+            self.location = arg[len(self.LOCATION_PREFIX):].strip()
             return EventModification(Translation.EVENTS_MODIFICATION_LOC, old_location, self.location), None
         return None, None
     def parse_title(self, arg):
         if arg.startswith(self.TITLE_PREFIX):
             old_title = self.title
-            self.title = arg[len(self.TITLE_PREFIX):]
+            self.title = arg[len(self.TITLE_PREFIX):].strip()
             return EventModification(Translation.EVENTS_MODIFICATION_TITLE, old_title, self.title), None
         return None, None
     def parse_url(self, arg):
         if arg.startswith(self.URL_PREFIX):
             old_url = self.url_string
-            event.set_url(arg[len(self.URL_PREFIX):])
+            event.set_url(arg[len(self.URL_PREFIX):].strip())
             return EventModification(Translation.EVENTS_MODIFICATION_URL, old_url, event.url_string), None
         return None, None
     def format_room_id(guild_id, channel_id):
@@ -461,7 +461,7 @@ class Tobman:
         id_str = Event.format_room_id(guild_id, channel_id)
         event_list = self.events.get(id_str)
         for event in event_list:
-            if event.title == event_title:
+            if event.title.strip() == event_title.strip():
                 yield event
     def delete_events(self, guild_id, channel_id, event_title):
         id_str = Event.format_room_id(guild_id, channel_id)
@@ -727,7 +727,7 @@ async def event(ctx, event_title: str, *args):
                 if (len(modifications) > 0) and (error_count == 0):
                     bot.tobman.save_data()
                     try:
-                        message = await event.refresh_mesage(channel)
+                        message = await event.refresh_message(channel)
                         if message:
                             new_embed = await event.generate_discord_embed()
                             # Can't attach a file to a message edit...
