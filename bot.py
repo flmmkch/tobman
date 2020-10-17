@@ -633,10 +633,11 @@ async def rename(ctx, member_id, to_name):
         try:
             member_real_id = int(member_id.replace('@', '').replace('<', '').replace('!', '').replace('>', ''))
         except ValueError:
+            print(f'Unable to read member id from {member_id}')
             member_real_id = None
     member = None
     if member_real_id is not None:
-        member = guild.get_member(member_real_id)
+        member = await guild.fetch_member(member_real_id)
     print(f'Rename command: try {member_id} ({member}) -> {to_name}') 
     if (guild is not None) and (author is not None) and Section.list_fits(bot.tobman.rename_allowed_in, channel):
         if (member is not None) and (not member.bot):
