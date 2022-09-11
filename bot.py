@@ -604,8 +604,9 @@ class Tobman:
             await self.events_scheduled_job()
             await asyncio.sleep(60)
         
+intents = discord.Intents(messages=True, guilds=True, reactions=True, message_content=True)
 
-bot = commands.Bot(command_prefix='/')
+bot = commands.Bot(command_prefix='/', intents=intents)
 bot.tobman = Tobman(bot)
 bot.tobman.load_config()
 bot.tobman.load_data()
