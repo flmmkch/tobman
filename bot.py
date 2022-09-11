@@ -2,7 +2,7 @@
 # coding: utf-8
 from __future__ import annotations
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from enum import Enum
 import yaml
 import re
@@ -557,6 +557,7 @@ class Tobman:
         (0, Translation.EVENTS_INFO_REMAINING_DAYS_TODAY),
     ]
     def init_schedule(self):
+        self.schedule = TobmanTimeScheduleCog(self)
         now = datetime.datetime.now()
         self.next_schedule = datetime.datetime.combine(datetime.datetime.today(), self.SCHEDULE_TIME)
         if now > self.next_schedule:
@@ -598,14 +599,26 @@ class Tobman:
                                         await channel.send(embed = embed)
                         else:
                             print(f'Channel not found: {channel_id} {len(event_list)}', file=sys.stderr)
-    async def loop_time_check(self):
-        await self.bot.wait_until_ready()
-        while not self.bot.is_closed():
-            await self.events_scheduled_job()
-            await asyncio.sleep(60)
-        
 
-bot = commands.Bot(command_prefix='/')
+class TobmanTimeScheduleCog(commands.Cog):
+    def __init__(self, tobman):
+        self.tobman = tobman
+
+    def cog_unload(self):
+        self.loop_time_check.cancel()
+
+    def start(self):
+        self.loop_time_check.start()
+
+    @tasks.loop(minutes=1.0)
+    async def loop_time_check(self):
+        await self.tobman.events_scheduled_job()
+        if self.tobman.bot.is_closed():
+            self.cog_unload()
+        
+intents = discord.Intents(messages=True, guilds=True, reactions=True, message_content=True)
+
+bot = commands.Bot(command_prefix='/', intents=intents)
 bot.tobman = Tobman(bot)
 bot.tobman.load_config()
 bot.tobman.load_data()
@@ -613,6 +626,7 @@ bot.tobman.load_data()
 @bot.event
 async def on_ready():
     print(f'Now logged in as {bot.user.name} {bot.user.id}')
+    bot.tobman.schedule.start()
 
 @bot.event
 async def on_guild_available(guild):
@@ -813,7 +827,5 @@ async def on_raw_reaction_add(raw_reaction_event):
 @bot.event
 async def on_raw_reaction_remove(raw_reaction_event):
     await bot.tobman.on_event_reaction_remove(raw_reaction_event.guild_id, raw_reaction_event.channel_id, raw_reaction_event.message_id, raw_reaction_event.user_id, raw_reaction_event.emoji)
-
-bot.loop.create_task(bot.tobman.loop_time_check())
 
 bot.run(bot.tobman.token)
